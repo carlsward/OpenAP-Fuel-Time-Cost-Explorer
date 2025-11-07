@@ -327,9 +327,9 @@ if run:
 
     # ---------- Tabell ----------
     with tab1:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
+        
         st.dataframe(res_df, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        
 
     # --- Segment-kort under tabellen ---
     for _, r in res_df[res_df["Segment"] != "Totalt"].iterrows():
@@ -384,7 +384,7 @@ if run:
 
     # ---------- Fuel–Time trade-off ----------
     with tab3:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
+       
         sweep_df = pareto_sweep(
             ac_code=ac_code,
             mass_takeoff_kg=mass_takeoff_kg,
@@ -442,7 +442,7 @@ if run:
 
             st.plotly_chart(fig_sw, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
             st.caption("Punkter = olika cruise-hastigheter. Stjärnor = snålast respektive snabbast.")
-        st.markdown('</div>', unsafe_allow_html=True)
+      
 
     st.markdown("---")
     st.caption("Drivs av OpenAP (pip-paketet `openap`).")
