@@ -356,14 +356,30 @@ if run:
         fig_alt = px.line(df, x="time_s", y="alt_ft", color="phase",
                           labels={"time_s":"Tid (s)", "alt_ft":"Höjd (ft)", "phase":"Fas"},
                           title="Höjdprofil")
-        fig_alt.update_layout(margin=dict(l=10, r=10, t=40, b=10), legend_title_text="Fas")
+        fig_alt.update_layout(
+    margin=dict(l=10, r=10, t=40, b=60),  # extra bottenmarginal för legend
+    legend=dict(
+        orientation="h",
+        yanchor="top", y=-0.18,   # under grafen
+        xanchor="center", x=0.5,
+        title_text=""
+    )
+)
         st.plotly_chart(fig_alt, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
 
         # Fartprofil
         fig_tas = px.line(df, x="time_s", y="tas_kts", color="phase",
                           labels={"time_s":"Tid (s)", "tas_kts":"TAS (kts)", "phase":"Fas"},
                           title="Fartprofil")
-        fig_tas.update_layout(margin=dict(l=10, r=10, t=40, b=10), legend_title_text="Fas")
+        fig_tas.update_layout(
+    margin=dict(l=10, r=10, t=40, b=60),
+    legend=dict(
+        orientation="h",
+        yanchor="top", y=-0.18,
+        xanchor="center", x=0.5,
+        title_text=""
+    )
+)
         st.plotly_chart(fig_tas, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
 
         # Bränsleflöde och kumulativt
@@ -410,14 +426,16 @@ if run:
                 title="Fuel–Time trade-off",
             )
             fig_sw.update_layout(
-                margin=dict(l=10, r=10, t=40, b=10),
-                coloraxis_colorbar=dict(
-                    title="Cruise TAS (kts)",
-                    orientation="h",
-                    y=1.12, x=0.5, xanchor="center", yanchor="bottom",
-                    thickness=10, len=0.6,
-                ),
-            )
+    margin=dict(l=10, r=10, t=40, b=70),   # mer plats i botten
+    coloraxis_colorbar=dict(
+        title="Cruise TAS (kts)",
+        orientation="h",
+        y=-0.28, yanchor="top",   # placera UNDER grafen
+        x=0.5, xanchor="center",
+        thickness=10, len=0.6
+    )
+)
+
             fig_sw.update_traces(
                 hovertemplate="Blocktid: %{x:.1f} min<br>Bränsle: %{y:.0f} kg<br>Cruise TAS: %{marker.color:.0f} kts<extra></extra>"
             )
