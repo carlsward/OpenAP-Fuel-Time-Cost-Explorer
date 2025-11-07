@@ -24,6 +24,20 @@ def ftmin_to_fts(vs_ftmin: float) -> float:
 def clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
+# ---- Plot-helper: titel + lock/unlock ----
+def plot_with_lock(fig, title: str, key: str):
+    # Vi visar titel till vänster och en toggle till höger
+    c1, c2 = st.columns([0.8, 0.2])
+    with c1:
+        st.markdown(f"### {title}")
+    with c2:
+        unlocked = st.toggle("🔓 Lås upp", value=False, key=key, help="Tillåt zoom/pan och verktygsrad")
+
+    # Låst = helt statisk figur (ingen pan/zoom). Upplåst = interaktiv + verktygsrad.
+    config = {"staticPlot": not unlocked, "displayModeBar": unlocked}
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit", config=config)
+
+
 
 @dataclass
 class SegmentResult:
@@ -230,6 +244,11 @@ html, body, [class*="css"] { font-family: Inter, -apple-system, Segoe UI, Roboto
 
 [data-testid="stMetric"]{ background:rgba(15,23,42,.6); border:1px solid var(--border); border-radius:14px; padding:10px 12px; }
 [data-testid="stMetricValue"]{ color:var(--text); }
+            
+
+
+
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -327,26 +346,23 @@ if run:
 
     # ---------- Tabell ----------
     with tab1:
-        
         st.dataframe(res_df, use_container_width=True)
+
+        # --- Segment-kort under tabellen (bara i Tabell-fliken) ---
+        for _, r in res_df[res_df["Segment"] != "Totalt"].iterrows():
+            st.markdown(
+                f"""
+                <div class="card" style="padding:12px; margin:12px 0;">
+                <div style="font-weight:700; font-size:1.05rem;">{r['Segment']}</div>
+                <div style="color:var(--muted); font-size:.95rem; line-height:1.4;">
+                    Tid: {r['Tid_min']:.1f} min · Distans: {r['Distans_NM']:.1f} NM<br>
+                    Bränsle: {r['Bränsle_kg']:.1f} kg · CO₂: {r['CO2_kg']:.1f} kg
+                </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
         
-
-    # --- Segment-kort under tabellen ---
-    for _, r in res_df[res_df["Segment"] != "Totalt"].iterrows():
-        st.markdown(
-            f"""
-            <div class="card" style="padding:12px; margin:12px 0;">
-              <div style="font-weight:700; font-size:1.05rem;">{r['Segment']}</div>
-              <div style="color:var(--muted); font-size:.95rem; line-height:1.4;">
-                Tid: {r['Tid_min']:.1f} min · Distans: {r['Distans_NM']:.1f} NM<br>
-                Bränsle: {r['Bränsle_kg']:.1f} kg · CO₂: {r['CO2_kg']:.1f} kg
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-
 
     
 
@@ -413,36 +429,29 @@ if run:
         if sweep_df.empty:
             st.info("Ingen data för svepet.")
         else:
+                    # --- Fuel–Time utan färgskala/gradient ---
             fig_sw = px.scatter(
                 sweep_df,
                 x="block_time_min",
                 y="fuel_kg",
-                color="cruise_tas_kts",
                 labels={
                     "block_time_min": "Blocktid (min)",
                     "fuel_kg": "Bränsle (kg)",
-                    "cruise_tas_kts": "Cruise TAS (kts)",
                 },
                 title="Fuel–Time trade-off",
+                hover_data={"cruise_tas_kts": True},  # visa TAS i hover
             )
-            fig_sw.update_layout(
-    margin=dict(l=10, r=10, t=40, b=70),   # mer plats i botten
-    coloraxis_colorbar=dict(
-        title="Cruise TAS (kts)",
-        orientation="h",
-        y=-0.28, yanchor="top",   # placera UNDER grafen
-        x=0.5, xanchor="center",
-        thickness=10, len=0.6
-    )
-)
 
-            fig_sw.update_traces(
-                hovertemplate="Blocktid: %{x:.1f} min<br>Bränsle: %{y:.0f} kg<br>Cruise TAS: %{marker.color:.0f} kts<extra></extra>"
+            # Stil & format
+            fig_sw.update_traces(marker=dict(size=9))
+            fig_sw.update_layout(
+                margin=dict(l=10, r=10, t=40, b=30),
+                showlegend=False  # ingen legend behövs
             )
             fig_sw.update_xaxes(tickformat=".0f")
             fig_sw.update_yaxes(tickformat=".0f")
 
-            # stjärnmarkörer
+            # Stjärnmarkörer (behåll)
             r_min_fuel = sweep_df.loc[sweep_df["fuel_kg"].idxmin()]
             r_min_time = sweep_df.loc[sweep_df["block_time_min"].idxmin()]
             fig_sw.add_scatter(
@@ -460,6 +469,7 @@ if run:
 
             st.plotly_chart(fig_sw, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
             st.caption("Punkter = olika cruise-hastigheter. Stjärnor = snålast respektive snabbast.")
+
       
 
     st.markdown("---")
