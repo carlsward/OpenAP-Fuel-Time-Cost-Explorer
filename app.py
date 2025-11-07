@@ -67,8 +67,6 @@ def simulate_flight(
     segs: List[SegmentResult] = []
 
     # --- Förberäkna ungefärlig nedstigningsdistans (för att veta hur mycket cruise som behövs)
-    # d_desc ≈ tid * TAS
-    # tid (s) = höjdskillnad(ft)/|vs| (ft/min) * 60
     descent_time_s_est = (cruise_alt_ft - 0.0) / abs(descent_vs_ftmin) * 60.0
     descent_dist_nm_est = kts_to_nm_per_s(descent_tas_kts) * descent_time_s_est
 
@@ -79,12 +77,9 @@ def simulate_flight(
     while alt_ft < cruise_alt_ft and dist_nm < max(1e-6, trip_distance_nm - descent_dist_nm_est):
         vs = climb_vs_ftmin  # ft/min
         tas = climb_tas_kts  # kts
-        # Fuel flow i kg/s enligt OpenAP
         ff = float(fuelflow.enroute(mass=mass_kg, tas=tas, alt=alt_ft, vs=vs))
-        # Emissioner (g/s). CO2 är linjärt av FF i OpenAP.
         co2_flow_gs = float(emission.co2(ff))
 
-        # Integrera
         fuel = ff * dt  # kg
         co2_g = co2_flow_gs * dt  # g
         dist_nm += kts_to_nm_per_s(tas) * dt
@@ -126,7 +121,6 @@ def simulate_flight(
         fuel = ff * dt
         co2_g = co2_flow_gs * dt
         dist_nm += kts_to_nm_per_s(tas) * dt
-        # alt konstant i cruise
         mass_kg -= fuel
         t += dt
 
@@ -207,7 +201,6 @@ def simulate_flight(
         )
     )
 
-    # tidsserie
     df = pd.DataFrame(rows)
     return segs, df
 
@@ -241,7 +234,7 @@ def pareto_sweep(
 # ---------- Streamlit UI (visual refresh) ----------
 st.set_page_config(page_title="OpenAP Fuel–Time–Cost Explorer", page_icon="✈️", layout="wide")
 
-# Minimal styling + subtila animationer
+# Styling: mer top-padding så hero-kortet inte klipps, och kolumner sida vid sida på desktop
 st.markdown("""
 <style>
 :root{
@@ -249,16 +242,28 @@ st.markdown("""
   --card:#0b1220e6; --border:#1f2a44; --text:#e5e7eb; --muted:#9ca3af;
 }
 html, body, [class*="css"] { font-family: Inter, -apple-system, Segoe UI, Roboto, sans-serif; }
-.block-container { padding-top: 1.0rem; }
+
+/* Extra luft upptill så hero-kortet inte skärs av */
+.block-container { padding-top: 2.4rem !important; }
+
+/* Säkerställ att två kolumner ligger bredvid varandra på desktop (>= 992px) */
+@media (min-width: 992px){
+  [data-testid="stHorizontalBlock"] { gap: 22px !important; }
+  [data-testid="column"] { width: calc(50% - 11px) !important; flex: 0 0 calc(50% - 11px) !important; }
+}
+
+/* Hero-kort */
 .hero {
+  margin-top: .3rem;  /* säkerställer synlig rundning upptill */
   background: radial-gradient(1000px 260px at 10% -20%, rgba(96,165,250,.25), transparent),
               linear-gradient(135deg, var(--bg1), var(--bg2));
   border: 1px solid var(--border);
-  border-radius: 22px; padding: 24px 22px; color: var(--text);
+  border-radius: 22px; padding: 26px 22px; color: var(--text);
   box-shadow: 0 10px 30px rgba(0,0,0,.25);
 }
-.hero h1 { margin: 0 0 .3rem 0; font-weight: 700; letter-spacing: .2px; }
+.hero h1 { margin: 0 0 .3rem 0; font-weight: 800; letter-spacing: .2px; }
 .hero p { margin: 0; color: var(--muted);}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -281,7 +286,19 @@ html, body, [class*="css"] { font-family: Inter, -apple-system, Segoe UI, Roboto
 [data-testid="stMetric"] { background: rgba(15,23,42,.6); border:1px solid var(--border); border-radius: 14px; padding: 10px 12px; }
 [data-testid="stMetricValue"] { color: var(--text); }
 [data-testid="stMetricDelta"] { font-weight:600; }
+            
+/* --- Responsive helpers (visa rätt komponent på mobil/desktop) --- */
+.show-mobile { display:none; }
+.show-desktop { display:block; }
+@media (max-width: 768px){
+  .show-desktop { display:none !important; }
+  .show-mobile { display:block !important; }
+  /* lite tajtare Plotly-höjd på mobil */
+  .plot-container { padding-top: 0 !important; }
+}
+
 </style>
+        
 """, unsafe_allow_html=True)
 
 # Hero
@@ -295,38 +312,36 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Inputs
-colwrap = st.container()
-with colwrap:
-    st.markdown('<div class="section-title">Indata</div>', unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
+# Inputs – två kolumner med större gap (och CSS-override håller dem bredvid varandra på desktop)
+st.markdown('<div class="section-title">Indata</div>', unsafe_allow_html=True)
+col1, col2 = st.columns((1, 1), gap="large")
 
-    # Lista stödda typer från OpenAP
-    supported = [x.upper() for x in prop.available_aircraft()]
-    with col1:
-        ac_code = st.selectbox("Flygplanstyp (ICAO)", options=supported, index=supported.index("A320") if "A320" in supported else 0)
-        ac_data: Dict = prop.aircraft(ac_code)
-        oew = float(ac_data.get("oew", 0))
-        mtow = float(ac_data.get("mtow", 0))
-        default_mass = (oew and mtow and (oew + mtow) / 2.0) or 65000.0
+# Lista stödda typer från OpenAP
+supported = [x.upper() for x in prop.available_aircraft()]
+with col1:
+    ac_code = st.selectbox("Flygplanstyp (ICAO)", options=supported, index=supported.index("A320") if "A320" in supported else 0)
+    ac_data: Dict = prop.aircraft(ac_code)
+    oew = float(ac_data.get("oew", 0))
+    mtow = float(ac_data.get("mtow", 0))
+    default_mass = (oew and mtow and (oew + mtow) / 2.0) or 65000.0
 
-        mass_takeoff_kg = st.slider(
-            "Antagen startmassa (kg)",
-            min_value=int(max(20000, oew if oew else 20000)),
-            max_value=int(max(50000, mtow if mtow else 120000)),
-            value=int(default_mass), step=500
-        )
+    mass_takeoff_kg = st.slider(
+        "Antagen startmassa (kg)",
+        min_value=int(max(20000, oew if oew else 20000)),
+        max_value=int(max(50000, mtow if mtow else 120000)),
+        value=int(default_mass), step=500
+    )
 
-        trip_distance_nm = st.number_input("Ruttlängd (NM)", value=500.0, min_value=50.0, step=50.0)
-        cruise_alt_ft = st.number_input("Cruise-höjd (ft)", value=35000.0, min_value=10000.0, max_value=43000.0, step=1000.0)
+    trip_distance_nm = st.number_input("Ruttlängd (NM)", value=500.0, min_value=50.0, step=50.0)
+    cruise_alt_ft = st.number_input("Cruise-höjd (ft)", value=35000.0, min_value=10000.0, max_value=43000.0, step=1000.0)
 
-    with col2:
-        st.markdown("**Hastigheter & vertikalhastigheter**")
-        climb_tas_kts = st.number_input("Climb TAS (kts)", value=300.0, step=10.0)
-        cruise_tas_kts = st.number_input("Cruise TAS (kts)", value=450.0, step=10.0)
-        descent_tas_kts = st.number_input("Descent TAS (kts)", value=300.0, step=10.0)
-        climb_vs_ftmin = st.number_input("Climb VS (ft/min)", value=1800.0, step=100.0)
-        descent_vs_ftmin = st.number_input("Descent VS (ft/min)", value=-1500.0, step=100.0)
+with col2:
+    st.markdown("**Hastigheter & vertikalhastigheter**")
+    climb_tas_kts = st.number_input("Climb TAS (kts)", value=300.0, step=10.0)
+    cruise_tas_kts = st.number_input("Cruise TAS (kts)", value=450.0, step=10.0)
+    descent_tas_kts = st.number_input("Descent TAS (kts)", value=300.0, step=10.0)
+    climb_vs_ftmin = st.number_input("Climb VS (ft/min)", value=1800.0, step=100.0)
+    descent_vs_ftmin = st.number_input("Descent VS (ft/min)", value=-1500.0, step=100.0)
 
 # Kör-knapp
 run = st.button("Kör simulering", use_container_width=True)
@@ -393,8 +408,29 @@ if run:
     # Tabbar för tabell och grafer
     tab1, tab2, tab3 = st.tabs(["📋 Tabell", "📈 Profiler", "🟣 Fuel–Time trade-off"])
     with tab1:
-        st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+        # DESKTOP: vanlig dataframe
+        st.markdown('<div class="card fade-in show-desktop">', unsafe_allow_html=True)
         st.dataframe(res_df, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # MOBIL: kort-baserad lista (ingen horisontell scroll)
+        st.markdown('<div class="card fade-in show-mobile">', unsafe_allow_html=True)
+        for _, r in res_df.iterrows():
+            st.markdown(
+                f"""
+                <div style="border:1px solid var(--border); border-radius:12px; padding:10px; margin-bottom:10px;">
+                <div style="font-weight:700;">{r['Segment']}</div>
+                <div style="color:var(--muted); font-size:0.95rem;">
+                    Tid: {r['Tid_min']:.1f} min · Distans: {r['Distans_NM']:.1f} NM<br>
+                    Bränsle: {r['Bränsle_kg']:.1f} kg · CO₂: {r['CO2_kg']:.1f} kg
+                </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Ladda-ner-knappen visas för båda vyer
         st.download_button(
             label="Ladda ner tidsserie (CSV)",
             data=df.to_csv(index=False).encode("utf-8"),
@@ -402,49 +438,74 @@ if run:
             mime="text/csv",
             use_container_width=True,
         )
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     with tab2:
         st.markdown('<div class="grid">', unsafe_allow_html=True)
 
-        # Höjd & hastighet över tid (färg efter fas)
-        fig_alt = px.line(
-            df, x="time_s", y="alt_ft", color="phase",
-            labels={"time_s":"Tid (s)", "alt_ft":"Höjd (ft)", "phase":"Fas"},
-            title="Höjdprofil"
-        )
-        fig_alt.update_layout(margin=dict(l=10, r=10, t=40, b=10), legend_title_text="Fas")
-        st.plotly_chart(fig_alt, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+        # Komprimerad y-range för mobil så "Fartprofil" inte ser platt ut
+        tas_min = float(df["tas_kts"].min())
+        tas_max = float(df["tas_kts"].max())
+        y_low = max(0.0, tas_min - 15.0)
+        y_high = tas_max + 15.0
 
-        fig_tas = px.line(
-            df, x="time_s", y="tas_kts", color="phase",
-            labels={"time_s":"Tid (s)", "tas_kts":"TAS (kts)", "phase":"Fas"},
-            title="Fartprofil"
-        )
-        fig_tas.update_layout(margin=dict(l=10, r=10, t=40, b=10), legend_title_text="Fas")
-        st.plotly_chart(fig_tas, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+        # --- Höjdprofil ---
+        fig_alt_d = px.line(df, x="time_s", y="alt_ft", color="phase",
+                            labels={"time_s":"Tid (s)", "alt_ft":"Höjd (ft)", "phase":"Fas"},
+                            title="Höjdprofil")
+        fig_alt_d.update_layout(margin=dict(l=10,r=10,t=40,b=10), legend_title_text="Fas")
 
-        # Bränsleflöde och kumulativt bränsle
+        fig_alt_m = fig_alt_d.to_dict()
+        fig_alt_m["layout"]["showlegend"] = False
+        fig_alt_m["layout"]["margin"] = dict(l=10, r=10, t=30, b=10)
+
+        st.markdown('<div class="show-desktop">', unsafe_allow_html=True)
+        st.plotly_chart(fig_alt_d, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="show-mobile">', unsafe_allow_html=True)
+        st.plotly_chart(fig_alt_m, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # --- Fartprofil ---
+        fig_tas_d = px.line(df, x="time_s", y="tas_kts", color="phase",
+                            labels={"time_s":"Tid (s)", "tas_kts":"TAS (kts)", "phase":"Fas"},
+                            title="Fartprofil")
+        fig_tas_d.update_layout(margin=dict(l=10,r=10,t=40,b=10), legend_title_text="Fas")
+
+        fig_tas_m = fig_tas_d.to_dict()
+        fig_tas_m["layout"]["showlegend"] = False
+        fig_tas_m["layout"]["margin"] = dict(l=10, r=10, t=30, b=10)
+        fig_tas_m["layout"]["yaxis"]["range"] = [y_low, y_high]
+
+        st.markdown('<div class="show-desktop">', unsafe_allow_html=True)
+        st.plotly_chart(fig_tas_d, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="show-mobile">', unsafe_allow_html=True)
+        st.plotly_chart(fig_tas_m, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # --- Bränsleflöde ---
         df_plot = df.copy()
         df_plot["fuel_cum_kg"] = df_plot["fuel_kg"].cumsum()
 
-        fig_ff = px.line(
-            df_plot, x="time_s", y="ff_kgs",
-            labels={"time_s":"Tid (s)", "ff_kgs":"Bränsleflöde (kg/s)"},
-            title="Bränsleflöde"
-        )
-        fig_ff.update_layout(margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig_ff, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+        fig_ff = px.line(df_plot, x="time_s", y="ff_kgs",
+                        labels={"time_s":"Tid (s)", "ff_kgs":"Bränsleflöde (kg/s)"},
+                        title="Bränsleflöde")
+        fig_ff.update_layout(margin=dict(l=10,r=10,t=40,b=10), showlegend=False)
 
-        fig_cum = px.line(
-            df_plot, x="time_s", y="fuel_cum_kg",
-            labels={"time_s":"Tid (s)", "fuel_cum_kg":"Kumulativt bränsle (kg)"},
-            title="Kumulativt bränsle"
-        )
-        fig_cum.update_layout(margin=dict(l=10, r=10, t=40, b=10))
+        fig_cum = px.line(df_plot, x="time_s", y="fuel_cum_kg",
+                        labels={"time_s":"Tid (s)", "fuel_cum_kg":"Kumulativt bränsle (kg)"},
+                        title="Kumulativt bränsle")
+        fig_cum.update_layout(margin=dict(l=10,r=10,t=40,b=10), showlegend=False)
+
+        st.plotly_chart(fig_ff, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
         st.plotly_chart(fig_cum, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
 
         st.markdown('</div>', unsafe_allow_html=True)
+
 
     with tab3:
         st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
@@ -460,58 +521,58 @@ if run:
         if sweep_df.empty:
             st.info("Ingen data för svepet.")
         else:
-            fig_sw = px.scatter(
-                sweep_df,
-                x="block_time_min",
-                y="fuel_kg",
-                color="cruise_tas_kts",
-                labels={
-                    "block_time_min": "Blocktid (min)",
-                    "fuel_kg": "Bränsle (kg)",
-                    "cruise_tas_kts": "Cruise TAS (kts)",
-                },
+            # DESKTOP: färgskala (horisontell)
+            fig_sw_d = px.scatter(
+                sweep_df, x="block_time_min", y="fuel_kg", color="cruise_tas_kts",
+                labels={"block_time_min":"Blocktid (min)","fuel_kg":"Bränsle (kg)","cruise_tas_kts":"Cruise TAS (kts)"},
                 title="Fuel–Time trade-off",
             )
-
-            # Flytta färgskalan och gör den diskret
-            fig_sw.update_layout(
-                margin=dict(l=10, r=10, t=40, b=10),
-                coloraxis_colorbar=dict(
-                    title="Cruise TAS (kts)",
-                    orientation="h",
-                    y=1.12, x=0.5, xanchor="center", yanchor="bottom",
-                    thickness=10, len=0.6,
-                ),
+            fig_sw_d.update_layout(
+                margin=dict(l=10,r=10,t=40,b=10),
+                coloraxis_colorbar=dict(title="Cruise TAS (kts)", orientation="h",
+                                        y=1.12, x=0.5, xanchor="center", yanchor="bottom",
+                                        thickness=10, len=0.6),
             )
+            fig_sw_d.update_traces(hovertemplate="Blocktid: %{x:.1f} min<br>Bränsle: %{y:.0f} kg<br>Cruise TAS: %{marker.color:.0f} kts<extra></extra>")
+            fig_sw_d.update_xaxes(tickformat=".0f"); fig_sw_d.update_yaxes(tickformat=".0f")
 
-            # Tydligare hover + rundade siffror
-            fig_sw.update_traces(
-                hovertemplate="Blocktid: %{x:.1f} min<br>Bränsle: %{y:.0f} kg<br>Cruise TAS: %{marker.color:.0f} kts<extra></extra>"
-            )
-            fig_sw.update_xaxes(tickformat=".0f")
-            fig_sw.update_yaxes(tickformat=".0f")
+            # MOBIL: ingen färgskala, legend avstängd (mer plats)
+            fig_sw_m = fig_sw_d.to_dict()
+            fig_sw_m["layout"]["coloraxis"]["showscale"] = False
+            fig_sw_m["layout"]["showlegend"] = False
+            fig_sw_m["layout"]["margin"] = dict(l=10, r=10, t=30, b=30)
 
-            # Markera snålast och snabbast – utan legendposter
+            # Stjärnor (läggs på båda)
             r_min_fuel = sweep_df.loc[sweep_df["fuel_kg"].idxmin()]
             r_min_time = sweep_df.loc[sweep_df["block_time_min"].idxmin()]
+            for fig in (fig_sw_d, fig_sw_m):
+                if hasattr(fig, "add_scatter"):
+                    fig.add_scatter(
+                        x=[r_min_fuel["block_time_min"]], y=[r_min_fuel["fuel_kg"]],
+                        mode="markers+text", text=["Min fuel"], textposition="top center",
+                        marker=dict(size=14, symbol="star", line=dict(width=1, color="white")),
+                        showlegend=False, hoverinfo="skip",
+                    )
+                    fig.add_scatter(
+                        x=[r_min_time["block_time_min"]], y=[r_min_time["fuel_kg"]],
+                        mode="markers+text", text=["Snabbast"], textposition="bottom center",
+                        marker=dict(size=14, symbol="star", line=dict(width=1, color="white")),
+                        showlegend=False, hoverinfo="skip",
+                    )
 
-            fig_sw.add_scatter(
-                x=[r_min_fuel["block_time_min"]], y=[r_min_fuel["fuel_kg"]],
-                mode="markers+text", text=["Min fuel"], textposition="top center",
-                marker=dict(size=14, symbol="star", line=dict(width=1, color="white")),
-                showlegend=False, hoverinfo="skip",
-            )
-            fig_sw.add_scatter(
-                x=[r_min_time["block_time_min"]], y=[r_min_time["fuel_kg"]],
-                mode="markers+text", text=["Snabbast"], textposition="bottom center",
-                marker=dict(size=14, symbol="star", line=dict(width=1, color="white")),
-                showlegend=False, hoverinfo="skip",
-            )
+            # Rendera rätt figur per enhet
+            st.markdown('<div class="show-desktop">', unsafe_allow_html=True)
+            st.plotly_chart(fig_sw_d, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+            st.markdown('</div>', unsafe_allow_html=True)
 
-            st.plotly_chart(fig_sw, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+            st.markdown('<div class="show-mobile">', unsafe_allow_html=True)
+            st.plotly_chart(fig_sw_m, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+            st.markdown('</div>', unsafe_allow_html=True)
+
             st.caption("Punkter = olika cruise-hastigheter. Stjärnor = snålast respektive snabbast.")
 
         st.markdown('</div>', unsafe_allow_html=True)
+
 
     st.markdown("---")
     st.caption("Drivs av OpenAP (pip-paketet `openap`). Visningen är uppfräschad med Plotly och lätt CSS för ett mer professionellt intryck.")
