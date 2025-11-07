@@ -5,6 +5,7 @@ from typing import Dict, Tuple, List
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.express as px  # pip install plotly
 
 # OpenAP – officiell Python-implementation
 # Docs/exempel: https://openap.dev/  (FuelFlow/Emission/prop)
@@ -34,7 +35,7 @@ class SegmentResult:
     co2_kg: float
 
 
-# ---------- Simuleringskärna ----------
+# ---------- Simuleringskärna (oförändrad) ----------
 def simulate_flight(
     ac_code: str,
     mass_takeoff_kg: float,
@@ -237,45 +238,101 @@ def pareto_sweep(
     return pd.DataFrame(records)
 
 
-# ---------- Streamlit UI ----------
-st.set_page_config(page_title="OpenAP Fuel–Time–Cost Explorer", layout="wide")
+# ---------- Streamlit UI (visual refresh) ----------
+st.set_page_config(page_title="OpenAP Fuel–Time–Cost Explorer", page_icon="✈️", layout="wide")
 
-st.title("OpenAP Fuel–Time–Cost Explorer")
-st.caption(
-    "Simulerar bränsle, blocktid och CO₂ med OpenAP (FuelFlow + Emission). "
-    "Tre-fas-modell: Climb → Cruise → Descent. "
+# Minimal styling + subtila animationer
+st.markdown("""
+<style>
+:root{
+  --bg1:#0b1220; --bg2:#0e172a; --acc:#60a5fa; --acc2:#34d399;
+  --card:#0b1220e6; --border:#1f2a44; --text:#e5e7eb; --muted:#9ca3af;
+}
+html, body, [class*="css"] { font-family: Inter, -apple-system, Segoe UI, Roboto, sans-serif; }
+.block-container { padding-top: 1.0rem; }
+.hero {
+  background: radial-gradient(1000px 260px at 10% -20%, rgba(96,165,250,.25), transparent),
+              linear-gradient(135deg, var(--bg1), var(--bg2));
+  border: 1px solid var(--border);
+  border-radius: 22px; padding: 24px 22px; color: var(--text);
+  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+}
+.hero h1 { margin: 0 0 .3rem 0; font-weight: 700; letter-spacing: .2px; }
+.hero p { margin: 0; color: var(--muted);}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px; padding: 18px; color: var(--text);
+  box-shadow: 0 6px 18px rgba(0,0,0,.16);
+}
+.section-title { font-weight: 700; margin-bottom: .6rem; }
+.badge { display:inline-block; padding:.22rem .5rem; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:.85rem; }
+.grid { display:grid; gap:14px; }
+.fade-in { animation: fadeIn .55s ease-out both; }
+@keyframes fadeIn { from {opacity:0; transform: translateY(6px)} to {opacity:1; transform:none} }
+.stButton>button {
+  background: linear-gradient(135deg, var(--acc), var(--acc2));
+  color: #0b1220; border: 0; border-radius: 12px; padding: .7rem 1rem;
+  font-weight: 700; letter-spacing: .2px;
+  box-shadow: 0 8px 20px rgba(52,211,153,.2);
+  transition: transform .08s ease, box-shadow .2s ease, opacity .2s ease;
+}
+.stButton>button:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(96,165,250,.28); }
+[data-testid="stMetric"] { background: rgba(15,23,42,.6); border:1px solid var(--border); border-radius: 14px; padding: 10px 12px; }
+[data-testid="stMetricValue"] { color: var(--text); }
+[data-testid="stMetricDelta"] { font-weight:600; }
+</style>
+""", unsafe_allow_html=True)
+
+# Hero
+st.markdown(
+    """
+    <div class="hero fade-in">
+      <h1>✈️ OpenAP Fuel–Time–Cost Explorer</h1>
+      <p>Simulerar bränsle, blocktid och CO₂ med en 3-fas-modell (Climb → Cruise → Descent) via OpenAP.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
-# Lista stödda typer från OpenAP (handboken visar exakt dessa)
-supported = [x.upper() for x in prop.available_aircraft()]
-col1, col2 = st.columns(2)
-with col1:
-    ac_code = st.selectbox("Flygplanstyp (ICAO)", options=supported, index=supported.index("A320") if "A320" in supported else 0)
+# Inputs
+colwrap = st.container()
+with colwrap:
+    st.markdown('<div class="section-title">Indata</div>', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
 
-    # Hämta typdata för default-massor
-    ac_data: Dict = prop.aircraft(ac_code)
-    oew = float(ac_data.get("oew", 0))
-    mtow = float(ac_data.get("mtow", 0))
-    default_mass = (oew + mtow) / 2.0 if (oew and mtow) else 65000.0
+    # Lista stödda typer från OpenAP
+    supported = [x.upper() for x in prop.available_aircraft()]
+    with col1:
+        ac_code = st.selectbox("Flygplanstyp (ICAO)", options=supported, index=supported.index("A320") if "A320" in supported else 0)
+        ac_data: Dict = prop.aircraft(ac_code)
+        oew = float(ac_data.get("oew", 0))
+        mtow = float(ac_data.get("mtow", 0))
+        default_mass = (oew and mtow and (oew + mtow) / 2.0) or 65000.0
 
-    mass_takeoff_kg = st.slider("Antagen startmassa (kg)", min_value=int(max(20000, oew if oew else 20000)),
-                                max_value=int(max(50000, mtow if mtow else 120000)),
-                                value=int(default_mass), step=500)
+        mass_takeoff_kg = st.slider(
+            "Antagen startmassa (kg)",
+            min_value=int(max(20000, oew if oew else 20000)),
+            max_value=int(max(50000, mtow if mtow else 120000)),
+            value=int(default_mass), step=500
+        )
 
-    trip_distance_nm = st.number_input("Ruttlängd (NM)", value=500.0, min_value=50.0, step=50.0)
-    cruise_alt_ft = st.number_input("Cruise-höjd (ft)", value=35000.0, min_value=10000.0, max_value=43000.0, step=1000.0)
+        trip_distance_nm = st.number_input("Ruttlängd (NM)", value=500.0, min_value=50.0, step=50.0)
+        cruise_alt_ft = st.number_input("Cruise-höjd (ft)", value=35000.0, min_value=10000.0, max_value=43000.0, step=1000.0)
 
-with col2:
-    st.markdown("**Hastigheter & vertikalhastigheter**")
-    climb_tas_kts = st.number_input("Climb TAS (kts)", value=300.0, step=10.0)
-    cruise_tas_kts = st.number_input("Cruise TAS (kts)", value=450.0, step=10.0)
-    descent_tas_kts = st.number_input("Descent TAS (kts)", value=300.0, step=10.0)
-    climb_vs_ftmin = st.number_input("Climb VS (ft/min)", value=1800.0, step=100.0)
-    descent_vs_ftmin = st.number_input("Descent VS (ft/min)", value=-1500.0, step=100.0)
+    with col2:
+        st.markdown("**Hastigheter & vertikalhastigheter**")
+        climb_tas_kts = st.number_input("Climb TAS (kts)", value=300.0, step=10.0)
+        cruise_tas_kts = st.number_input("Cruise TAS (kts)", value=450.0, step=10.0)
+        descent_tas_kts = st.number_input("Descent TAS (kts)", value=300.0, step=10.0)
+        climb_vs_ftmin = st.number_input("Climb VS (ft/min)", value=1800.0, step=100.0)
+        descent_vs_ftmin = st.number_input("Descent VS (ft/min)", value=-1500.0, step=100.0)
 
+# Kör-knapp
 run = st.button("Kör simulering", use_container_width=True)
 
 if run:
+    # --- Simulera ---
     segs, df = simulate_flight(
         ac_code,
         mass_takeoff_kg,
@@ -290,15 +347,15 @@ if run:
     )
 
     # Resultattabell
-    st.subheader("Resultat per segment")
+    st.markdown('<div class="section-title">Resultat</div>', unsafe_allow_html=True)
     res_df = pd.DataFrame(
         [
             dict(
                 Segment=s.name,
                 Tid_min=round(s.seconds / 60.0, 1),
                 Distans_NM=round(s.distance_nm, 1),
-                Bränsle_kg=int(s.fuel_kg),
-                CO2_kg=int(s.co2_kg),
+                Bränsle_kg=round(s.fuel_kg, 1),
+                CO2_kg=round(s.co2_kg, 1),
             )
             for s in segs
         ]
@@ -307,51 +364,156 @@ if run:
         Segment="Totalt",
         Tid_min=round(res_df["Tid_min"].sum(), 1),
         Distans_NM=round(trip_distance_nm, 1),
-        Bränsle_kg=int(res_df["Bränsle_kg"].sum()),
-        CO2_kg=int(res_df["CO2_kg"].sum()),
+        Bränsle_kg=round(res_df["Bränsle_kg"].sum(), 1),
+        CO2_kg=round(res_df["CO2_kg"].sum(), 1),
     )
     res_df = pd.concat([res_df, pd.DataFrame([total])], ignore_index=True)
-    st.dataframe(res_df, use_container_width=True)
 
-    # Ladda ner råtidsserie
-    st.download_button(
-        label="Ladda ner tidsserie (CSV)",
-        data=df.to_csv(index=False).encode("utf-8"),
-        file_name="timeline.csv",
-        mime="text/csv",
-        use_container_width=True,
+    # Top-metrics
+    tcol1, tcol2, tcol3, tcol4 = st.columns(4)
+    with tcol1:
+        st.metric("Bränsle totalt", f"{total['Bränsle_kg']:.1f} kg")
+    with tcol2:
+        st.metric("CO₂ totalt", f"{total['CO2_kg']:.1f} kg")
+    with tcol3:
+        st.metric("Blocktid", f"{total['Tid_min']:.1f} min")
+    with tcol4:
+        st.metric("Distans", f"{total['Distans_NM']:.1f} NM")
+
+    # Liten badge-rad
+    st.markdown(
+        f"""
+        <div class="badge fade-in">
+          Typ: <b>{ac_code}</b> · MTOW: {int(mtow) if mtow else "—"} kg · OEW: {int(oew) if oew else "—"} kg
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.subheader("Höjd & hastighet över tid")
-    colA, colB = st.columns(2)
-    with colA:
-        st.line_chart(df.set_index("time_s")[["alt_ft"]])
-    with colB:
-        st.line_chart(df.set_index("time_s")[["tas_kts"]])
+    # Tabbar för tabell och grafer
+    tab1, tab2, tab3 = st.tabs(["📋 Tabell", "📈 Profiler", "🟣 Fuel–Time trade-off"])
+    with tab1:
+        st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+        st.dataframe(res_df, use_container_width=True)
+        st.download_button(
+            label="Ladda ner tidsserie (CSV)",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name="timeline.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    st.subheader("Bränsleflöde (kg/s) och kumulativ bränsle (kg)")
-    df["fuel_cum_kg"] = df["fuel_kg"].cumsum()
-    colC, colD = st.columns(2)
-    with colC:
-        st.line_chart(df.set_index("time_s")[["ff_kgs"]])
-    with colD:
-        st.line_chart(df.set_index("time_s")[["fuel_cum_kg"]])
+    with tab2:
+        st.markdown('<div class="grid">', unsafe_allow_html=True)
 
-    # Pareto-svep (valfritt)
-    st.subheader("Fuel–Time trade-off (svep över Cruise TAS)")
-    sweep_df = pareto_sweep(
-        ac_code=ac_code,
-        mass_takeoff_kg=mass_takeoff_kg,
-        trip_distance_nm=trip_distance_nm,
-        cruise_alt_ft=cruise_alt_ft,
-        cruise_tas_range_kts=(int(max(360, cruise_tas_kts - 60)), int(min(500, cruise_tas_kts + 60))),
-        steps=9,
-    )
-    st.scatter_chart(sweep_df, x="block_time_min", y="fuel_kg", size=None, color=None)
-    st.caption("Punkter = olika cruise-hastigheter (kts). Välj den balans du vill visa/provjämföra.")
+        # Höjd & hastighet över tid (färg efter fas)
+        fig_alt = px.line(
+            df, x="time_s", y="alt_ft", color="phase",
+            labels={"time_s":"Tid (s)", "alt_ft":"Höjd (ft)", "phase":"Fas"},
+            title="Höjdprofil"
+        )
+        fig_alt.update_layout(margin=dict(l=10, r=10, t=40, b=10), legend_title_text="Fas")
+        st.plotly_chart(fig_alt, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
 
-st.markdown("---")
-st.caption(
-    "Drivs av OpenAP (pip-paketet `openap`). Grundidé: estimera bränsleflöde från mass/TAS/alt/VS, "
-    "integrera över tid och summera segment. Emissioner (CO₂) från OpenAP:s Emission-klass."
-)
+        fig_tas = px.line(
+            df, x="time_s", y="tas_kts", color="phase",
+            labels={"time_s":"Tid (s)", "tas_kts":"TAS (kts)", "phase":"Fas"},
+            title="Fartprofil"
+        )
+        fig_tas.update_layout(margin=dict(l=10, r=10, t=40, b=10), legend_title_text="Fas")
+        st.plotly_chart(fig_tas, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+
+        # Bränsleflöde och kumulativt bränsle
+        df_plot = df.copy()
+        df_plot["fuel_cum_kg"] = df_plot["fuel_kg"].cumsum()
+
+        fig_ff = px.line(
+            df_plot, x="time_s", y="ff_kgs",
+            labels={"time_s":"Tid (s)", "ff_kgs":"Bränsleflöde (kg/s)"},
+            title="Bränsleflöde"
+        )
+        fig_ff.update_layout(margin=dict(l=10, r=10, t=40, b=10))
+        st.plotly_chart(fig_ff, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+
+        fig_cum = px.line(
+            df_plot, x="time_s", y="fuel_cum_kg",
+            labels={"time_s":"Tid (s)", "fuel_cum_kg":"Kumulativt bränsle (kg)"},
+            title="Kumulativt bränsle"
+        )
+        fig_cum.update_layout(margin=dict(l=10, r=10, t=40, b=10))
+        st.plotly_chart(fig_cum, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with tab3:
+        st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+        sweep_df = pareto_sweep(
+            ac_code=ac_code,
+            mass_takeoff_kg=mass_takeoff_kg,
+            trip_distance_nm=trip_distance_nm,
+            cruise_alt_ft=cruise_alt_ft,
+            cruise_tas_range_kts=(int(max(360, cruise_tas_kts - 60)), int(min(500, cruise_tas_kts + 60))),
+            steps=9,
+        )
+
+        if sweep_df.empty:
+            st.info("Ingen data för svepet.")
+        else:
+            fig_sw = px.scatter(
+                sweep_df,
+                x="block_time_min",
+                y="fuel_kg",
+                color="cruise_tas_kts",
+                labels={
+                    "block_time_min": "Blocktid (min)",
+                    "fuel_kg": "Bränsle (kg)",
+                    "cruise_tas_kts": "Cruise TAS (kts)",
+                },
+                title="Fuel–Time trade-off",
+            )
+
+            # Flytta färgskalan och gör den diskret
+            fig_sw.update_layout(
+                margin=dict(l=10, r=10, t=40, b=10),
+                coloraxis_colorbar=dict(
+                    title="Cruise TAS (kts)",
+                    orientation="h",
+                    y=1.12, x=0.5, xanchor="center", yanchor="bottom",
+                    thickness=10, len=0.6,
+                ),
+            )
+
+            # Tydligare hover + rundade siffror
+            fig_sw.update_traces(
+                hovertemplate="Blocktid: %{x:.1f} min<br>Bränsle: %{y:.0f} kg<br>Cruise TAS: %{marker.color:.0f} kts<extra></extra>"
+            )
+            fig_sw.update_xaxes(tickformat=".0f")
+            fig_sw.update_yaxes(tickformat=".0f")
+
+            # Markera snålast och snabbast – utan legendposter
+            r_min_fuel = sweep_df.loc[sweep_df["fuel_kg"].idxmin()]
+            r_min_time = sweep_df.loc[sweep_df["block_time_min"].idxmin()]
+
+            fig_sw.add_scatter(
+                x=[r_min_fuel["block_time_min"]], y=[r_min_fuel["fuel_kg"]],
+                mode="markers+text", text=["Min fuel"], textposition="top center",
+                marker=dict(size=14, symbol="star", line=dict(width=1, color="white")),
+                showlegend=False, hoverinfo="skip",
+            )
+            fig_sw.add_scatter(
+                x=[r_min_time["block_time_min"]], y=[r_min_time["fuel_kg"]],
+                mode="markers+text", text=["Snabbast"], textposition="bottom center",
+                marker=dict(size=14, symbol="star", line=dict(width=1, color="white")),
+                showlegend=False, hoverinfo="skip",
+            )
+
+            st.plotly_chart(fig_sw, use_container_width=True, theme="streamlit", config={"displayModeBar": False})
+            st.caption("Punkter = olika cruise-hastigheter. Stjärnor = snålast respektive snabbast.")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.caption("Drivs av OpenAP (pip-paketet `openap`). Visningen är uppfräschad med Plotly och lätt CSS för ett mer professionellt intryck.")
+else:
+    st.caption("Ställ in indata ovan och klicka **Kör simulering**.")
